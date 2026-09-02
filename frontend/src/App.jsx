@@ -154,14 +154,70 @@ export default function VeriShieldForensicApp() {
     }, 350);
   };
 
-  const handleAuthSubmit = (e) => {
-    e.preventDefault();
-    if (!formData.email || !formData.password) {
-      alert("Please provide both email and password.");
-      return;
+  const handleAuthSubmit = async (e) => {
+  e.preventDefault();
+
+  if (!formData.email || !formData.password) {
+    alert("Please provide both email and password.");
+    return;
+  }
+
+  if (authMode === "register") {
+    try {
+      const response = await fetch("http://localhost:8080/api/auth/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Registration failed");
+      }
+
+      const user = await response.json();
+
+      alert("Registration successful!");
+
+      triggerDashboardTransition("authenticated", user.name);
+    } catch (error) {
+      console.error(error);
+      alert("Registration failed. Please try again.");
     }
-    triggerDashboardTransition("authenticated", formData.name || formData.email.split("@")[0]);
-  };
+
+    return;
+  }
+
+try {
+  const response = await fetch("http://localhost:8080/api/auth/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email: formData.email,
+      password: formData.password,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Invalid email or password");
+  }
+
+  const user = await response.json();
+
+  alert("Login successful!");
+
+  triggerDashboardTransition("authenticated", user.name);
+} catch (error) {
+  console.error(error);
+  alert("Invalid email or password.");
+}
 
   const handleGuestEntry = () => {
     triggerDashboardTransition("guest", "Guest Forensic Officer");
@@ -1632,4 +1688,4 @@ export default function VeriShieldForensicApp() {
       </div>
     </div>
   );
-}
+} }
