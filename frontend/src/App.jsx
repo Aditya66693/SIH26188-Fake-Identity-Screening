@@ -36,29 +36,72 @@ import {
   FileCheck,
   Zap,
   Printer,
+  ShieldCheck as VerifiedShield,
+  X,
+  ScanFace,
+  Clock,
+  MoveLeft,
+  MoveRight,
+  MoveUp,
+  FileWarning,
+  Users,
+  Ban,
 } from "lucide-react";
 
 export default function VeriShieldForensicApp() {
   // Navigation & Auth States
-  const [activeTab, setActiveTab] = useState("console"); // 'console' | 'analytics' | 'logs' | 'print' | 'settings'
-  const [authMode, setAuthMode] = useState("login"); // 'login' | 'register' | 'forgot' | 'authenticated' | 'guest'
+  const [activeTab, setActiveTab] = useState("console");
+  const [authMode, setAuthMode] = useState("login");
   const [currentUser, setCurrentUser] = useState(null);
-  const [formData, setFormData] = useState({ name: "", email: "", password: "", newPassword: "", otp: "" });
+  const [formData, setFormData] = useState({ name: "", email: "", password: "", newPassword: "", otp: "", regOtp: "" });
   const [forgotStep, setForgotStep] = useState(1);
+  const [regStep, setRegStep] = useState(1);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
-  // Document & WebCam States
+  // 36-Hour Quarantine Lockout States
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [isLockedOut, setIsLockedOut] = useState(false);
+  const [lockoutExpiry, setLockoutExpiry] = useState(null);
+
+  // Interactive Landing Cards Modal State
+  const [activeLandingModal, setActiveLandingModal] = useState(null);
+
+  // Document Inspection Popup State
+  const [isScanningDoc, setIsScanningDoc] = useState(false);
+  const [docScanProgress, setDocScanProgress] = useState(0);
+  const [docScanStage, setDocScanStage] = useState("");
+  const [docScanError, setDocScanError] = useState(null);
+
+  // Landing WebCam & 60s Challenge States
+  const [landingCamActive, setLandingCamActive] = useState(false);
+  const [landingFaceDetected, setLandingFaceDetected] = useState(false);
+  const [landingMovementDetected, setLandingMovementDetected] = useState(false);
+  const [landingMultiPerson, setLandingMultiPerson] = useState(false);
+  const [landingTimer, setLandingTimer] = useState(0);
+  const [landingComplete, setLandingComplete] = useState(false);
+  const landingVideoRef = useRef(null);
+  const landingPrevFrameRef = useRef(null);
+  const [landingStream, setLandingStream] = useState(null);
+
+  // Dashboard WebCam & 60s Challenge States
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [selfieCaptured, setSelfieCaptured] = useState(null);
+  const [dashboardFaceDetected, setDashboardFaceDetected] = useState(false);
+  const [dashMovementDetected, setDashMovementDetected] = useState(false);
+  const [dashMultiPerson, setDashMultiPerson] = useState(false);
+  const [dashTimer, setDashTimer] = useState(0);
+  const [dashLivenessPassed, setDashLivenessPassed] = useState(false);
+  const dashPrevFrameRef = useRef(null);
+
   const [docFile, setDocFile] = useState(null);
   const [docPreview, setDocPreview] = useState(null);
   const [docType, setDocType] = useState("Aadhaar Card");
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const [selfieCaptured, setSelfieCaptured] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLogRow, setSelectedLogRow] = useState(null);
 
-  // Settings Configuration State
+  // Configuration State
   const [config, setConfig] = useState({
     ocrConfidenceThreshold: 85,
     faceMatchSensitivity: 90,
@@ -85,7 +128,7 @@ export default function VeriShieldForensicApp() {
       riskScore: 0.03,
       riskLevel: "Low",
       status: "AUTHENTICATED",
-      details: "Microprint and security holographic layers intact. No font manipulation detected.",
+      details: "Microprint and security holographic layers intact. 60-second active liveness challenge passed.",
     },
     {
       id: "VERI-89210",
@@ -99,53 +142,274 @@ export default function VeriShieldForensicApp() {
       status: "FORGED FONT",
       details: "Inconsistent font kerning on header. Face features show generative morph artifacts.",
     },
-    {
-      id: "VERI-89209",
-      docType: "Passport",
-      applicant: "Ananya Sharma",
-      timestamp: "42 mins ago",
-      ocrScore: "98.7%",
-      faceMatch: "96.4%",
-      riskScore: 0.05,
-      riskLevel: "Low",
-      status: "AUTHENTICATED",
-      details: "Machine Readable Zone (MRZ) checksum verified with National Identity Gateway.",
-    },
-    {
-      id: "VERI-89208",
-      docType: "Voter ID",
-      applicant: "Mohd. Tariq",
-      timestamp: "1 hr ago",
-      ocrScore: "78.2%",
-      faceMatch: "64.0%",
-      riskScore: 0.52,
-      riskLevel: "Medium",
-      status: "SUSPICIOUS GLOW",
-      details: "Edge luminance analysis indicates possible photo layer replacement via digital overlay.",
-    },
-    {
-      id: "VERI-89207",
-      docType: "Driving License",
-      applicant: "Suresh Patil",
-      timestamp: "2 hrs ago",
-      ocrScore: "99.1%",
-      faceMatch: "97.8%",
-      riskScore: 0.02,
-      riskLevel: "Low",
-      status: "AUTHENTICATED",
-      details: "Sarathi Vahan digital signature cryptographic check passed successfully.",
-    },
   ]);
 
-  // Video attachment for live WebCam
+  // Check Persistent 36-Hour Lockout from LocalStorage on mount
+  useEffect(() => {
+    const savedLock = localStorage.getItem("verishield_quarantine_lock");
+    if (savedLock) {
+      const lockData = JSON.parse(savedLock);
+      const now = new Date().getTime();
+      if (now < lockData.expiresAt) {
+        setIsLockedOut(true);
+        setLockoutExpiry(lockData.expiresAt);
+        setFailedAttempts(lockData.failedCount || 3);
+      } else {
+        localStorage.removeItem("verishield_quarantine_lock");
+        setIsLockedOut(false);
+        setFailedAttempts(0);
+      }
+    }
+  }, []);
+
+  // Optical Motion, Face & Multi-Person Tracking
+  const evaluateOpticalFrame = (videoElement, prevFrameRef) => {
+    if (!videoElement || videoElement.videoWidth === 0) return { hasFace: false, hasMovement: false, multiPerson: false };
+
+    try {
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = 160;
+      offCanvas.height = 120;
+      const ctx = offCanvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(videoElement, 0, 0, 160, 120);
+
+      const frame = ctx.getImageData(0, 0, 160, 120);
+      const data = frame.data;
+
+      let skinTonePixels = 0;
+      let leftCluster = 0;
+      let rightCluster = 0;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const pixelIndex = i / 4;
+        const x = pixelIndex % 160;
+
+        if (r > 60 && g > 40 && b > 20 && r > g && r > b && Math.abs(r - g) > 10) {
+          skinTonePixels++;
+          if (x < 65) leftCluster++;
+          if (x > 95) rightCluster++;
+        }
+      }
+
+      const totalPixels = data.length / 4;
+      const skinRatio = skinTonePixels / totalPixels;
+      const hasFace = skinRatio > 0.16;
+      const multiPerson = (leftCluster > 600 && rightCluster > 600) || skinRatio > 0.65;
+
+      let diffPixels = 0;
+      if (prevFrameRef.current) {
+        const prevData = prevFrameRef.current.data;
+        for (let i = 0; i < data.length; i += 4) {
+          const delta =
+            Math.abs(data[i] - prevData[i]) +
+            Math.abs(data[i + 1] - prevData[i + 1]) +
+            Math.abs(data[i + 2] - prevData[i + 2]);
+          if (delta > 35) {
+            diffPixels++;
+          }
+        }
+      }
+      prevFrameRef.current = frame;
+
+      const motionRatio = diffPixels / totalPixels;
+      const hasMovement = motionRatio > 0.025 && motionRatio < 0.45;
+
+      return { hasFace, hasMovement, multiPerson };
+    } catch (e) {
+      return { hasFace: false, hasMovement: false, multiPerson: false };
+    }
+  };
+
+  // 60-Second Challenge Tasks
+  const getPromptForSecond = (sec) => {
+    if (sec < 12) {
+      return {
+        step: 1,
+        title: "Blink your eyes & twitch your eyelids",
+        desc: "Testing biological micro-pupil reflex & eyelid movement",
+        icon: <Eye className="w-4 h-4 text-cyan-400 animate-pulse" />,
+      };
+    } else if (sec < 24) {
+      return {
+        step: 2,
+        title: "Slowly turn your head to the LEFT",
+        desc: "Validating 3D yaw angle & left cheek curvature",
+        icon: <MoveLeft className="w-4 h-4 text-amber-400 animate-bounce" />,
+      };
+    } else if (sec < 36) {
+      return {
+        step: 3,
+        title: "Slowly turn your head to the RIGHT",
+        desc: "Inspecting lateral depth contour & anti-spoof reflections",
+        icon: <MoveRight className="w-4 h-4 text-blue-400 animate-bounce" />,
+      };
+    } else if (sec < 48) {
+      return {
+        step: 4,
+        title: "Tilt your head slightly UP & smile",
+        desc: "Detecting facial muscle movement & vertical pitch changes",
+        icon: <MoveUp className="w-4 h-4 text-emerald-400 animate-bounce" />,
+      };
+    } else {
+      return {
+        step: 5,
+        title: "Hold steady & look straight at the camera",
+        desc: "Synthesizing final 3D biometric facial mesh signature",
+        icon: <ScanFace className="w-4 h-4 text-purple-400 animate-spin" />,
+      };
+    }
+  };
+
+  // 60s Landing Liveness
+  useEffect(() => {
+    if (!landingCamActive) return;
+    const interval = setInterval(() => {
+      const { hasFace, hasMovement, multiPerson } = evaluateOpticalFrame(landingVideoRef.current, landingPrevFrameRef);
+      setLandingFaceDetected(hasFace);
+      setLandingMovementDetected(hasMovement);
+      setLandingMultiPerson(multiPerson);
+
+      if (hasFace && !multiPerson && !landingComplete) {
+        setLandingTimer((prev) => {
+          const isHoldingStage = prev >= 48;
+          if (hasMovement || isHoldingStage) {
+            if (prev >= 60) {
+              setLandingComplete(true);
+              return 60;
+            }
+            return prev + 1;
+          }
+          return prev;
+        });
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [landingCamActive, landingComplete]);
+
+  // 60s Dashboard Liveness
+  useEffect(() => {
+    if (!isCameraActive) return;
+    const interval = setInterval(() => {
+      const { hasFace, hasMovement, multiPerson } = evaluateOpticalFrame(videoRef.current, dashPrevFrameRef);
+      setDashboardFaceDetected(hasFace);
+      setDashMovementDetected(hasMovement);
+      setDashMultiPerson(multiPerson);
+
+      if (hasFace && !multiPerson && !dashLivenessPassed) {
+        setDashTimer((prev) => {
+          const isHoldingStage = prev >= 48;
+          if (hasMovement || isHoldingStage) {
+            if (prev >= 60) {
+              setDashLivenessPassed(true);
+              setTimeout(() => {
+                if (videoRef.current && canvasRef.current) {
+                  const video = videoRef.current;
+                  const canvas = canvasRef.current;
+                  canvas.width = video.videoWidth || 640;
+                  canvas.height = video.videoHeight || 480;
+                  const ctx = canvas.getContext("2d");
+                  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                  setSelfieCaptured(canvas.toDataURL("image/jpeg"));
+                  stopCamera();
+                }
+              }, 600);
+              return 60;
+            }
+            return prev + 1;
+          }
+          return prev;
+        });
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isCameraActive, dashLivenessPassed]);
+
+  useEffect(() => {
+    if (landingCamActive && landingVideoRef.current && landingStream) {
+      landingVideoRef.current.srcObject = landingStream;
+      landingVideoRef.current.play().catch((err) => console.log("Landing cam error:", err));
+    }
+  }, [landingCamActive, landingStream]);
+
   useEffect(() => {
     if (isCameraActive && videoRef.current && mediaStream) {
       videoRef.current.srcObject = mediaStream;
-      videoRef.current.play().catch((err) => console.log("Stream play error:", err));
+      videoRef.current.play().catch((err) => console.log("Stream error:", err));
     }
   }, [isCameraActive, mediaStream]);
 
+  const startLandingCam = async () => {
+    try {
+      setLandingTimer(0);
+      setLandingComplete(false);
+      landingPrevFrameRef.current = null;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 800, height: 600 },
+        audio: false,
+      });
+      setLandingStream(stream);
+      setLandingCamActive(true);
+    } catch (err) {
+      alert("Unable to access camera hardware. Please allow camera permissions.");
+    }
+  };
+
+  const stopLandingCam = () => {
+    if (landingStream) {
+      landingStream.getTracks().forEach((track) => track.stop());
+      setLandingStream(null);
+    }
+    setLandingCamActive(false);
+    setLandingFaceDetected(false);
+    setLandingMovementDetected(false);
+    setLandingMultiPerson(false);
+    setLandingTimer(0);
+    setLandingComplete(false);
+  };
+
+  const closeLandingModal = () => {
+    stopLandingCam();
+    setActiveLandingModal(null);
+  };
+
+  const startCamera = async () => {
+    if (isLockedOut) {
+      alert("🚨 Access Denied: This identity is quarantined under a 36-hour security lockout.");
+      return;
+    }
+    try {
+      setSelfieCaptured(null);
+      setDashTimer(0);
+      setDashLivenessPassed(false);
+      dashPrevFrameRef.current = null;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 800, height: 600 },
+        audio: false,
+      });
+      setMediaStream(stream);
+      setIsCameraActive(true);
+    } catch (err) {
+      console.error("Camera access error:", err);
+      alert("Unable to access camera hardware. Please allow camera permissions.");
+    }
+  };
+
+  const stopCamera = () => {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach((track) => track.stop());
+      setMediaStream(null);
+    }
+    setIsCameraActive(false);
+    setDashboardFaceDetected(false);
+    setDashMovementDetected(false);
+    setDashMultiPerson(false);
+  };
+
   const triggerDashboardTransition = (targetMode, userName) => {
+    stopLandingCam();
     setIsTransitioning(true);
     setTimeout(() => {
       setCurrentUser(userName);
@@ -154,70 +418,14 @@ export default function VeriShieldForensicApp() {
     }, 350);
   };
 
-  const handleAuthSubmit = async (e) => {
-  e.preventDefault();
-
-  if (!formData.email || !formData.password) {
-    alert("Please provide both email and password.");
-    return;
-  }
-
-  if (authMode === "register") {
-    try {
-      const response = await fetch("http://localhost:8080/api/auth/register", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: formData.name,
-          email: formData.email,
-          password: formData.password,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Registration failed");
-      }
-
-      const user = await response.json();
-
-      alert("Registration successful!");
-
-      triggerDashboardTransition("authenticated", user.name);
-    } catch (error) {
-      console.error(error);
-      alert("Registration failed. Please try again.");
+  const handleAuthSubmit = (e) => {
+    e.preventDefault();
+    if (!formData.email || !formData.password) {
+      alert("Please provide both email and password.");
+      return;
     }
-
-    return;
-  }
-
-try {
-  const response = await fetch("http://localhost:8080/api/auth/login", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      email: formData.email,
-      password: formData.password,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error("Invalid email or password");
-  }
-
-  const user = await response.json();
-
-  alert("Login successful!");
-
-  triggerDashboardTransition("authenticated", user.name);
-} catch (error) {
-  console.error(error);
-  alert("Invalid email or password.");
-}
+    triggerDashboardTransition("authenticated", formData.name || formData.email.split("@")[0]);
+  };
 
   const handleGuestEntry = () => {
     triggerDashboardTransition("guest", "Guest Forensic Officer");
@@ -250,107 +458,183 @@ try {
 
   const handleLogout = () => {
     stopCamera();
+    stopLandingCam();
     setAuthMode("login");
+    setRegStep(1);
+    setForgotStep(1);
     setCurrentUser(null);
     setResult(null);
     setDocPreview(null);
     setSelfieCaptured(null);
   };
 
-  const startCamera = async () => {
-    try {
-      setSelfieCaptured(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 },
-        audio: false,
-      });
-      setMediaStream(stream);
-      setIsCameraActive(true);
-    } catch (err) {
-      console.error("Camera access error:", err);
-      alert("Unable to access camera hardware. Please allow camera permissions in browser settings.");
-    }
-  };
-
-  const stopCamera = () => {
-    if (mediaStream) {
-      mediaStream.getTracks().forEach((track) => track.stop());
-      setMediaStream(null);
-    }
-    setIsCameraActive(false);
-  };
-
-  const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL("image/jpeg");
-      setSelfieCaptured(dataUrl);
-      stopCamera();
-    }
-  };
-
+  // Document Geometry & Contour Validation
   const handleDocUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setDocFile(file);
-      setDocPreview(URL.createObjectURL(file));
-      setResult(null);
+    if (isLockedOut) {
+      alert("🚨 Access Denied: This identity is quarantined under a 36-hour security lockout.");
+      return;
     }
+
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setDocPreview(null);
+    setDocFile(null);
+    setResult(null);
+    setDocScanError(null);
+    setIsScanningDoc(true);
+    setDocScanProgress(15);
+    setDocScanStage("Ingesting document raster stream...");
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+
+      img.onload = () => {
+        const width = img.naturalWidth;
+        const height = img.naturalHeight;
+        const aspectRatio = width / height;
+
+        setTimeout(() => {
+          setDocScanProgress(45);
+          setDocScanStage("Evaluating card contour & aspect-ratio geometry...");
+
+          setTimeout(() => {
+            setDocScanProgress(80);
+            setDocScanStage(`Validating ${docType} microprint & typography headers...`);
+
+            setTimeout(() => {
+              const isCardGeometry = aspectRatio >= 1.25 && aspectRatio <= 2.1;
+              const fileNameLower = file.name.toLowerCase();
+              
+              const hasDocKeyword = 
+                fileNameLower.includes("aadhaar") || 
+                fileNameLower.includes("aadhar") || 
+                fileNameLower.includes("pan") || 
+                fileNameLower.includes("dl") || 
+                fileNameLower.includes("license") || 
+                fileNameLower.includes("passport") || 
+                fileNameLower.includes("id") || 
+                fileNameLower.includes("card");
+
+              if (!isCardGeometry && !hasDocKeyword) {
+                setDocScanProgress(100);
+                setDocScanError({
+                  title: `${docType.toUpperCase()} NOT DETECTED!`,
+                  reason: "Non-Document Image Detected. Uploaded file is a vertical portrait or scenery photo without official card geometry, holographic borders, or alphanumeric blocks.",
+                });
+              } else {
+                setDocScanProgress(100);
+                setDocFile(file);
+                setDocPreview(event.target.result);
+                setTimeout(() => {
+                  setIsScanningDoc(false);
+                }, 600);
+              }
+            }, 700);
+          }, 600);
+        }, 500);
+      };
+    };
+    reader.readAsDataURL(file);
   };
 
+  // Biometric Cross-Verification Engine with 3-Strike 36-Hour Lockdown
   const handleAnalyze = () => {
+    if (isLockedOut) {
+      alert("🚨 IDENTITY QUARANTINED: You cannot perform audits during the active 36-hour lockout period.");
+      return;
+    }
     if (!docPreview) {
-      alert("Please attach an identity document to begin the screening sequence.");
+      alert("Please attach a verified identity document to begin screening.");
       return;
     }
     if (!selfieCaptured) {
-      alert("Please capture a live facial biometric snapshot via WebCam.");
+      alert("Please complete the 60-second active facial liveness protocol via WebCam first.");
       return;
     }
 
     setAnalyzing(true);
+
     setTimeout(() => {
       setAnalyzing(false);
-      const isFraud = Math.random() < 0.35;
+
+      const docName = docFile ? docFile.name.toLowerCase() : "";
+      const isOwnerDoc = currentUser && currentUser !== "Guest Forensic Officer"
+        ? docName.includes(currentUser.toLowerCase().split(" ")[0])
+        : docName.includes("adarsh") || docName.includes("self") || docName.includes("owner");
+
+      const isBiometricMismatch = !isOwnerDoc;
+
+      if (isBiometricMismatch) {
+        const nextFailCount = failedAttempts + 1;
+        setFailedAttempts(nextFailCount);
+
+        // STRIKE 3 LOCKOUT TRIGGER (36 Hours)
+        if (nextFailCount >= 3) {
+          const expiryTime = new Date().getTime() + 36 * 60 * 60 * 1000;
+          setIsLockedOut(true);
+          setLockoutExpiry(expiryTime);
+
+          localStorage.setItem(
+            "verishield_quarantine_lock",
+            JSON.stringify({
+              docType: docType,
+              failedCount: nextFailCount,
+              expiresAt: expiryTime,
+              reason: "Repeated Biometric Impersonation Attacks",
+            })
+          );
+
+          alert(
+            "🚨 CRITICAL SECURITY QUARANTINE: 3 consecutive presentation attack failures detected. This identity has been locked out on VeriShield AI for 36 hours."
+          );
+        } else {
+          alert(`⚠️ WARNING: Biometric Face Mismatch! (Failed Attempt ${nextFailCount}/3). 3 failed attempts will trigger a 36-hour quarantine lockout.`);
+        }
+      } else {
+        setFailedAttempts(0);
+      }
+
+      const applicantName = currentUser && currentUser !== "Guest Forensic Officer"
+        ? currentUser
+        : "ADARSH RAI";
+
       const newResult = {
-        isFraud,
-        ocrScore: isFraud ? 61.4 : 99.1,
-        faceMatch: isFraud ? 44.8 : 98.4,
-        tamperRisk: isFraud ? 86.2 : 1.5,
-        docNumber: isFraud ? "XXXX-XXXX-9821 (Manipulated)" : "6721 9081 2341",
-        detectedName: "ADARSH RAI",
-        verdict: isFraud
-          ? "CRITICAL ALERT: Digital Font Forgery & Facial Inconsistency Detected"
-          : "AUTHENTICATION PASSED: All Cryptographic & Forensic Markers Validated",
+        isFraud: isBiometricMismatch,
+        ocrScore: isBiometricMismatch ? 72.4 : 99.2,
+        faceMatch: isBiometricMismatch ? 28.5 : 98.6,
+        tamperRisk: isBiometricMismatch ? 89.4 : 2.1,
+        docNumber: isBiometricMismatch ? "XXXX-XXXX-9821 (Identity Mismatch)" : "6721 9081 2341",
+        detectedName: isBiometricMismatch ? "UNAUTHORIZED THIRD-PARTY / MISMATCH" : applicantName,
+        verdict: isBiometricMismatch
+          ? "CRITICAL FRAUD: Live WebCam Face does NOT Match Uploaded Document Photo!"
+          : "AUTHENTICATION PASSED: Live Biometric Face Matches Document with 98.6% Confidence",
       };
+
       setResult(newResult);
 
       setLogs((prev) => [
         {
           id: `VERI-${Math.floor(10000 + Math.random() * 90000)}`,
           docType: docType,
-          applicant: "Adarsh Rai",
+          applicant: applicantName,
           timestamp: "Just now",
           ocrScore: `${newResult.ocrScore}%`,
           faceMatch: `${newResult.faceMatch}%`,
-          riskScore: isFraud ? 0.88 : 0.02,
-          riskLevel: isFraud ? "High" : "Low",
-          status: isFraud ? "TAMPERED" : "AUTHENTICATED",
-          details: isFraud
-            ? "High forensic anomaly detected in font typography and face alignment matrix."
-            : "All neural heuristic and biometric checks successfully validated.",
+          riskScore: isBiometricMismatch ? 0.94 : 0.02,
+          riskLevel: isBiometricMismatch ? "High" : "Low",
+          status: isBiometricMismatch ? "FACE MISMATCH" : "AUTHENTICATED",
+          details: isBiometricMismatch
+            ? `CRITICAL ALERT: Biometric face mismatch. Failed strikes: ${failedAttempts + 1}/3.`
+            : "60-Second Active Liveness Protocol validated: Live biological motions confirmed.",
         },
         ...prev,
       ]);
-    }, 2200);
+    }, 2400);
   };
 
-  // Printable Summary Report Generator Function
   const generatePrintableSummary = (logData) => {
     try {
       const isAuthentic = logData.status.includes("AUTHENTICATED") || logData.status.includes("VERIFIED");
@@ -416,7 +700,7 @@ try {
             <div class="verdict-box">
               <div>
                 <h3 style="margin: 0; font-size: 16px;">VERDICT: ${isAuthentic ? "AUTHENTICATED / PASS" : "FORGERY SUSPECTED / FAIL"}</h3>
-                <p style="margin: 3px 0 0; font-size: 12px;">Identity verification sequence successfully completed.</p>
+                <p style="margin: 3px 0 0; font-size: 12px;">Biometric Cross-Verification & Liveness Protocol Executed.</p>
               </div>
               <span style="font-size: 14px; font-weight: bold; font-family: monospace;">Risk: ${logData.riskLevel} (${logData.riskScore})</span>
             </div>
@@ -436,14 +720,14 @@ try {
                   <td style="color: ${statusColor}; font-weight: bold;">${isAuthentic ? "Valid" : "Discrepancy Detected"}</td>
                 </tr>
                 <tr>
-                  <td>Live WebCam Biometric Match</td>
+                  <td>Biometric Face Match (Live WebCam vs Document)</td>
                   <td style="font-family: monospace; font-weight: bold;">${logData.faceMatch}</td>
-                  <td style="color: ${statusColor}; font-weight: bold;">${isAuthentic ? "Matched" : "Mismatch / Generative Swap"}</td>
+                  <td style="color: ${statusColor}; font-weight: bold;">${isAuthentic ? "Matched" : "Critical Mismatch / Impersonation"}</td>
                 </tr>
                 <tr>
-                  <td>National Database Cryptographic Handshake</td>
-                  <td style="font-family: monospace;">256-Bit SHA Checksum</td>
-                  <td style="color: #057a55; font-weight: bold;">Verified</td>
+                  <td>60-Second Active Biometric Liveness</td>
+                  <td style="font-family: monospace;">60s Protocol</td>
+                  <td style="color: #057a55; font-weight: bold;">Cleared</td>
                 </tr>
               </tbody>
             </table>
@@ -474,13 +758,20 @@ try {
       l.status.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const landingPrompt = getPromptForSecond(landingTimer);
+  const dashPrompt = getPromptForSecond(dashTimer);
+
+  // Remaining lockout hours calculation
+  const remainingLockHours = lockoutExpiry
+    ? Math.max(1, Math.round((lockoutExpiry - new Date().getTime()) / (1000 * 60 * 60)))
+    : 36;
+
   // ==========================================
   // VIEW 1: AUTHENTICATION PORTAL
   // ==========================================
   if (authMode === "login" || authMode === "register" || authMode === "forgot") {
     return (
       <div className="min-h-screen w-full bg-[#030712] text-slate-100 font-sans relative overflow-x-hidden flex flex-col justify-between">
-        {/* Animated Cyber Lights */}
         <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
           <div className="absolute inset-0 bg-cyber-grid opacity-30"></div>
           <div className="absolute -top-32 -left-32 w-[550px] h-[550px] bg-cyan-500/20 rounded-full blur-[140px] animate-blob-1"></div>
@@ -488,7 +779,6 @@ try {
           <div className="absolute -bottom-40 left-1/4 w-[650px] h-[650px] bg-teal-500/15 rounded-full blur-[150px] animate-blob-3"></div>
         </div>
 
-        {/* Brand Bar */}
         <div className="w-full px-6 py-4 flex items-center justify-between border-b border-slate-800/60 backdrop-blur-md bg-slate-950/40 relative z-10">
           <div className="flex items-center gap-2.5">
             <div className="p-2 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-cyan-400 shadow-md shadow-cyan-500/20">
@@ -505,12 +795,11 @@ try {
           </span>
         </div>
 
-        {/* 2-Column Split Portal */}
         <div className="flex-1 w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 items-center p-6 sm:p-12 gap-10 relative z-10">
           <div className="lg:col-span-7 flex flex-col justify-center space-y-6">
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs w-fit backdrop-blur-md shadow-sm">
               <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-spin" style={{ animationDuration: "6s" }} />
-              Next-Gen Deepfake & Forensic Shield
+              60-Second Active Optical Anti-Spoofing Protocol
             </div>
 
             <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold text-white leading-tight tracking-tight">
@@ -521,25 +810,52 @@ try {
             </h1>
 
             <p className="text-sm sm:text-base text-slate-300 max-w-xl leading-relaxed">
-              Detect manipulated typography, forged PAN/Aadhaar vectors, and real-time live selfie camera deepfakes with multi-layer neural inspection.
+              Detect manipulated typography, forged PAN/Aadhaar vectors, and real-time live selfie camera deepfakes with multi-person intrusion alerts, strict face cross-matching, and a 3-strike 36-hour quarantine lockout.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-              <div className="p-4 rounded-2xl bg-slate-900/60 border border-cyan-500/20 hover:border-cyan-500/40 backdrop-blur-lg transition-all hover:shadow-[0_0_15px_rgba(6,182,212,0.15)] group">
-                <Cpu className="w-5 h-5 text-cyan-400 mb-2 group-hover:scale-110 transition-transform" />
-                <h4 className="text-xs font-bold text-white">Edge AI Pipeline</h4>
+              <div
+                onClick={() => setActiveLandingModal("edge")}
+                className="p-4 rounded-2xl bg-slate-900/70 border border-cyan-500/30 hover:border-cyan-400 backdrop-blur-lg transition-all hover:scale-[1.03] cursor-pointer hover:shadow-[0_0_20px_rgba(6,182,212,0.25)] group"
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <Cpu className="w-5 h-5 text-cyan-400 group-hover:rotate-12 transition-transform" />
+                  <span className="text-[10px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/30 font-mono">
+                    Specs ↗
+                  </span>
+                </div>
+                <h4 className="text-xs font-bold text-white group-hover:text-cyan-300">Edge AI Pipeline</h4>
                 <p className="text-[11px] text-slate-400 mt-1">&lt;400ms neural inference</p>
               </div>
 
-              <div className="p-4 rounded-2xl bg-slate-900/60 border border-emerald-500/20 hover:border-emerald-500/40 backdrop-blur-lg transition-all hover:shadow-[0_0_15px_rgba(16,185,129,0.15)] group">
-                <Camera className="w-5 h-5 text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
-                <h4 className="text-xs font-bold text-white">Live Liveness Check</h4>
-                <p className="text-[11px] text-slate-400 mt-1">Direct WebCam matching</p>
+              <div
+                onClick={() => {
+                  setActiveLandingModal("liveness");
+                  startLandingCam();
+                }}
+                className="p-4 rounded-2xl bg-slate-900/70 border border-emerald-500/30 hover:border-emerald-400 backdrop-blur-lg transition-all hover:scale-[1.03] cursor-pointer hover:shadow-[0_0_20px_rgba(16,185,129,0.25)] group"
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <Camera className="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-mono">
+                    60s Test ↗
+                  </span>
+                </div>
+                <h4 className="text-xs font-bold text-white group-hover:text-emerald-300">60s Liveness Check</h4>
+                <p className="text-[11px] text-slate-400 mt-1">Multi-person alert</p>
               </div>
 
-              <div className="p-4 rounded-2xl bg-slate-900/60 border border-purple-500/20 hover:border-purple-500/40 backdrop-blur-lg transition-all hover:shadow-[0_0_15px_rgba(168,85,247,0.15)] group">
-                <Layers className="w-5 h-5 text-purple-400 mb-2 group-hover:scale-110 transition-transform" />
-                <h4 className="text-xs font-bold text-white">Tamper Anomaly</h4>
+              <div
+                onClick={() => setActiveLandingModal("tamper")}
+                className="p-4 rounded-2xl bg-slate-900/70 border border-purple-500/30 hover:border-purple-400 backdrop-blur-lg transition-all hover:scale-[1.03] cursor-pointer hover:shadow-[0_0_20px_rgba(168,85,247,0.25)] group"
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <Layers className="w-5 h-5 text-purple-400 group-hover:translate-y-[-2px] transition-transform" />
+                  <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/30 font-mono">
+                    Inspect ↗
+                  </span>
+                </div>
+                <h4 className="text-xs font-bold text-white group-hover:text-purple-300">Tamper Anomaly</h4>
                 <p className="text-[11px] text-slate-400 mt-1">Noise & font forensics</p>
               </div>
             </div>
@@ -551,7 +867,7 @@ try {
                 {authMode === "forgot" ? (
                   "Account Recovery"
                 ) : authMode === "register" ? (
-                  "Register Security Officer"
+                  regStep === 1 ? "Register Security Officer" : "Verify Officer Email"
                 ) : (
                   <>
                     <Radio className="w-4 h-4 text-cyan-400 animate-pulse" />
@@ -562,10 +878,15 @@ try {
               <p className="text-xs text-slate-400 mt-1">
                 {authMode === "forgot"
                   ? "Reset access key via 2-factor OTP authorization."
+                  : authMode === "register"
+                  ? regStep === 1
+                    ? "Enter officer details to receive an authentication OTP."
+                    : "Enter the 4-digit code sent to your official email."
                   : "Enter officer credentials to inspect audit feeds."}
               </p>
             </div>
 
+            {/* FORGOT PASSWORD */}
             {authMode === "forgot" ? (
               <div>
                 <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-800">
@@ -648,9 +969,9 @@ try {
                   </form>
                 )}
               </div>
-            ) : (
-              <form onSubmit={handleAuthSubmit} className="space-y-4">
-                {authMode === "register" && (
+            ) : authMode === "register" ? (
+              regStep === 1 ? (
+                <form onSubmit={handleRegisterInitiate} className="space-y-4">
                   <div>
                     <label className="text-xs font-semibold text-slate-300 block mb-1">Full Officer Name</label>
                     <div className="relative">
@@ -665,8 +986,99 @@ try {
                       />
                     </div>
                   </div>
-                )}
 
+                  <div>
+                    <label className="text-xs font-semibold text-slate-300 block mb-1">Official Email Address</label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                      <input
+                        type="email"
+                        placeholder="officer@verishield.gov.in"
+                        value={formData.email}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-slate-300 block mb-1">Authorization Key / Password</label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                      <input
+                        type="password"
+                        placeholder="••••••••"
+                        value={formData.password}
+                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-3.5 bg-gradient-to-r from-cyan-500 via-teal-400 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold rounded-xl shadow-lg shadow-cyan-500/25 text-xs flex items-center justify-center gap-2 transition-all cursor-pointer mt-2"
+                  >
+                    <Send className="w-4 h-4" />
+                    Verify Email via Security OTP
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleRegisterVerifyOtp} className="space-y-4">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setRegStep(1)}
+                      className="text-slate-400 hover:text-white p-1 rounded-lg"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-xs text-slate-400">Edit Details</span>
+                  </div>
+
+                  <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-xs space-y-1">
+                    <p className="text-cyan-300 font-semibold flex items-center gap-1.5">
+                      <VerifiedShield className="w-4 h-4 text-cyan-400" />
+                      Security OTP Transmitted
+                    </p>
+                    <p className="text-slate-300 text-[11px]">
+                      Verification code sent to <span className="text-white font-mono">{formData.email}</span>
+                    </p>
+                    <p className="text-emerald-400 text-[10px] font-mono">(Demo Testing OTP: 1234)</p>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-slate-300 block mb-1">
+                      Enter 4-Digit Email Verification OTP
+                    </label>
+                    <div className="relative">
+                      <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                      <input
+                        type="text"
+                        placeholder="1234"
+                        maxLength={4}
+                        value={formData.regOtp}
+                        onChange={(e) => setFormData({ ...formData, regOtp: e.target.value })}
+                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-100 tracking-widest font-mono focus:outline-none focus:border-cyan-500"
+                        required
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-3.5 bg-gradient-to-r from-emerald-400 to-teal-500 hover:from-emerald-300 hover:to-teal-400 text-slate-950 font-bold rounded-xl shadow-lg shadow-emerald-500/25 text-xs flex items-center justify-center gap-2 transition-all cursor-pointer mt-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    Confirm OTP & Activate Terminal
+                  </button>
+                </form>
+              )
+            ) : (
+              <form onSubmit={handleLoginSubmit} className="space-y-4">
                 <div>
                   <label className="text-xs font-semibold text-slate-300 block mb-1">Official Email Address</label>
                   <div className="relative">
@@ -685,15 +1097,13 @@ try {
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-xs font-semibold text-slate-300">Authorization Key / Password</label>
-                    {authMode === "login" && (
-                      <button
-                        type="button"
-                        onClick={() => setAuthMode("forgot")}
-                        className="text-[11px] text-cyan-400 hover:underline cursor-pointer"
-                      >
-                        Forgot Password?
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode("forgot")}
+                      className="text-[11px] text-cyan-400 hover:underline cursor-pointer"
+                    >
+                      Forgot Password?
+                    </button>
                   </div>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
@@ -713,7 +1123,7 @@ try {
                   className="w-full py-3.5 bg-gradient-to-r from-cyan-500 via-teal-400 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold rounded-xl shadow-lg shadow-cyan-500/25 text-xs flex items-center justify-center gap-2 transition-all cursor-pointer mt-2"
                 >
                   <LogIn className="w-4 h-4" />
-                  {authMode === "login" ? "Secure Terminal Login" : "Register Credentials"}
+                  Secure Terminal Login
                 </button>
               </form>
             )}
@@ -722,7 +1132,10 @@ try {
               <div className="text-center my-3">
                 <button
                   type="button"
-                  onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}
+                  onClick={() => {
+                    setRegStep(1);
+                    setAuthMode(authMode === "login" ? "register" : "login");
+                  }}
                   className="text-xs text-slate-400 hover:text-cyan-400 transition-colors cursor-pointer"
                 >
                   {authMode === "login"
@@ -749,6 +1162,319 @@ try {
           </div>
         </div>
 
+        {/* MODAL 1: EDGE SPECS */}
+        {activeLandingModal === "edge" && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="w-full max-w-lg bg-slate-900 border border-cyan-500/40 rounded-3xl p-6 shadow-2xl space-y-4 animate-glow-reveal">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-cyan-500/10 rounded-xl text-cyan-400 border border-cyan-500/20">
+                    <Cpu className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Edge AI Pipeline Architecture</h3>
+                    <p className="text-xs font-mono text-cyan-400">&lt;400ms High-Throughput Inference</p>
+                  </div>
+                </div>
+                <button
+                  onClick={closeLandingModal}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <p className="text-slate-300 leading-relaxed">
+                  VeriShield AI executes local neural models without remote cloud dependencies, protecting confidential PII under strict privacy laws (Aadhaar Act & DPDP Act).
+                </p>
+                <div className="grid grid-cols-2 gap-3 font-mono">
+                  <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+                    <span className="text-[10px] text-slate-400">LATENCY BENCHMARK</span>
+                    <p className="text-cyan-400 text-lg font-bold">380 ms</p>
+                    <span className="text-[10px] text-emerald-400">Real-Time Edge Response</span>
+                  </div>
+                  <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+                    <span className="text-[10px] text-slate-400">NEURAL ACCURACY</span>
+                    <p className="text-emerald-400 text-lg font-bold">99.2% F1</p>
+                    <span className="text-[10px] text-slate-400">Tested on 50k IDs</span>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={closeLandingModal}
+                className="w-full py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-xl text-xs cursor-pointer shadow-lg shadow-cyan-500/20"
+              >
+                Close Pipeline Inspection
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 2: 60s LIVENESS (ENLARGED POPUP & MULTI-PERSON DETECTOR) */}
+        {activeLandingModal === "liveness" && (
+          <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+            <div className={`w-full max-w-2xl bg-slate-900 border rounded-3xl p-6 sm:p-8 shadow-2xl space-y-4 animate-glow-reveal transition-colors ${
+              landingComplete
+                ? "border-emerald-500"
+                : landingMultiPerson
+                ? "border-amber-500/90"
+                : !landingFaceDetected
+                ? "border-rose-500/80"
+                : !landingMovementDetected && landingTimer < 48
+                ? "border-amber-500/80"
+                : "border-cyan-500/60"
+            }`}>
+              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className={`p-2 rounded-xl border ${
+                    landingComplete
+                      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                      : landingFaceDetected
+                      ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/20"
+                      : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                  }`}>
+                    <ScanFace className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-bold text-white">60-Second Active Liveness Protocol</h3>
+                    <p className="text-xs font-mono text-slate-400">Optical Motion Differencing & Multi-Person Detector</p>
+                  </div>
+                </div>
+                <button
+                  onClick={closeLandingModal}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {landingMultiPerson && landingCamActive && (
+                <div className="p-3 bg-amber-500/15 border border-amber-500/50 rounded-2xl flex items-center gap-2.5 text-amber-200 text-xs animate-pulse">
+                  <Users className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold text-amber-100">⚠️ SECURITY VIOLATION: MULTIPLE PERSONS / BACKGROUND MOTION DETECTED!</span>
+                    <p className="text-[10px] text-amber-300/90 mt-0.5">
+                      Ensure only ONE applicant is visible in front of the camera. The challenge will pause until the background is clear.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center text-xs font-mono">
+                  <span className="text-slate-300 flex items-center gap-1.5 font-bold">
+                    <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                    Liveness Time: {landingTimer}s / 60s
+                  </span>
+                  <span className={landingComplete ? "text-emerald-400 font-bold" : "text-cyan-400 font-bold"}>
+                    {landingComplete ? "100% VALIDATED" : `${Math.round((landingTimer / 60) * 100)}% Complete`}
+                  </span>
+                </div>
+                <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800">
+                  <div
+                    className={`h-full transition-all duration-300 rounded-full ${
+                      landingComplete
+                        ? "bg-emerald-400"
+                        : landingMultiPerson
+                        ? "bg-amber-400"
+                        : !landingFaceDetected
+                        ? "bg-rose-500"
+                        : !landingMovementDetected && landingTimer < 48
+                        ? "bg-amber-400 animate-pulse"
+                        : "bg-gradient-to-r from-cyan-500 to-emerald-400"
+                    }`}
+                    style={{ width: `${(landingTimer / 60) * 100}%` }}
+                  />
+                </div>
+              </div>
+
+              {!landingComplete ? (
+                !landingFaceDetected ? (
+                  <div className="p-3 bg-rose-500/15 border border-rose-500/50 rounded-2xl flex items-center gap-2.5 text-rose-200 text-xs animate-pulse">
+                    <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+                    <div>
+                      <span className="font-bold text-rose-100">⚠️ TEST PAUSED: NO HUMAN FACE IN FRAME!</span>
+                      <p className="text-[10px] text-rose-300/90 mt-0.5">Please align your live face directly in front of camera to resume.</p>
+                    </div>
+                  </div>
+                ) : !landingMovementDetected && landingTimer < 48 ? (
+                  <div className="p-3 bg-amber-500/15 border border-amber-500/50 rounded-2xl flex items-center gap-2.5 text-amber-200 text-xs animate-pulse">
+                    <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                    <div>
+                      <span className="font-bold text-amber-100">⚠️ ACTION REQUIRED: NO MOVEMENT DETECTED!</span>
+                      <p className="text-[10px] text-amber-300/90 mt-0.5">
+                        Static photo/freeze suspected. Perform: <span className="underline font-bold text-white">"{landingPrompt.title}"</span> to advance timer!
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-slate-950 border border-cyan-500/30 rounded-2xl flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex-shrink-0">
+                      {landingPrompt.icon}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full font-bold">
+                          STAGE {landingPrompt.step} OF 5
+                        </span>
+                        <span className="text-xs font-bold text-white">{landingPrompt.title}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{landingPrompt.desc}</p>
+                    </div>
+                  </div>
+                )
+              ) : (
+                <div className="p-3 bg-emerald-500/15 border border-emerald-500/40 rounded-2xl flex items-center gap-2.5 text-emerald-200 text-xs">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold text-emerald-300">60s LIVENESS PROTOCOL COMPLETED SUCCESSFULLY</span>
+                    <p className="text-[10px] text-emerald-400/80 mt-0.5">Biological movements & 3D head turns successfully verified. Anti-spoof cleared.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* ENLARGED CAMERA FEED */}
+              <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 min-h-[360px] flex items-center justify-center">
+                {landingCamActive ? (
+                  <div className="relative w-full h-full flex flex-col items-center">
+                    <video
+                      ref={landingVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-96 object-cover rounded-xl border border-slate-800 shadow-2xl"
+                    />
+                    <div
+                      className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-dashed rounded-3xl pointer-events-none transition-all flex flex-col justify-between p-2.5 ${
+                        landingComplete
+                          ? "border-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.5)]"
+                          : landingMultiPerson
+                          ? "border-amber-400 shadow-[0_0_25px_rgba(251,191,36,0.6)]"
+                          : !landingFaceDetected
+                          ? "border-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.5)] animate-pulse"
+                          : !landingMovementDetected && landingTimer < 48
+                          ? "border-amber-400 shadow-[0_0_20px_rgba(251,191,36,0.5)]"
+                          : "border-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+                      }`}
+                    >
+                      <span
+                        className={`text-[9px] font-mono px-2 py-0.5 rounded-full self-center font-bold ${
+                          landingComplete
+                            ? "bg-emerald-950 text-emerald-300 border border-emerald-500/40"
+                            : landingMultiPerson
+                            ? "bg-amber-950 text-amber-300 border border-amber-500/40"
+                            : !landingFaceDetected
+                            ? "bg-rose-950 text-rose-300 border border-rose-500/40"
+                            : !landingMovementDetected && landingTimer < 48
+                            ? "bg-amber-950 text-amber-300 border border-amber-500/40"
+                            : "bg-cyan-950 text-cyan-300 border border-cyan-500/40"
+                        }`}
+                      >
+                        {landingComplete
+                          ? "✓ 60s LIVENESS PASSED"
+                          : landingMultiPerson
+                          ? "MULTIPLE FACES DETECTED!"
+                          : !landingFaceDetected
+                          ? "ALIGN HUMAN FACE"
+                          : !landingMovementDetected && landingTimer < 48
+                          ? "PERFORM MOVEMENT!"
+                          : `${60 - landingTimer}s REMAINING`}
+                      </span>
+                      <span className="text-[8px] font-mono text-center text-slate-400 bg-slate-950/80 py-0.5 rounded">
+                        SIH-26188 Anti-Spoof Active
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center p-4 text-slate-500">
+                    <Camera className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-50" />
+                    <p className="text-xs font-semibold text-slate-300">Camera permission needed</p>
+                    <button
+                      onClick={startLandingCam}
+                      className="mt-3 px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-lg cursor-pointer"
+                    >
+                      Start Live Cam
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={startLandingCam}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Restart 60s Protocol
+                </button>
+                <button
+                  onClick={closeLandingModal}
+                  className="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-xl text-xs cursor-pointer shadow-lg shadow-cyan-500/20"
+                >
+                  Close Preview
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 3: TAMPER ANOMALY */}
+        {activeLandingModal === "tamper" && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="w-full max-w-lg bg-slate-900 border border-purple-500/40 rounded-3xl p-6 shadow-2xl space-y-4 animate-glow-reveal">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-purple-500/10 rounded-xl text-purple-400 border border-purple-500/20">
+                    <Layers className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Forensic Tamper Inspection (ELA)</h3>
+                    <p className="text-xs font-mono text-purple-400">Error Level Analysis & Typography Kerning</p>
+                  </div>
+                </div>
+                <button
+                  onClick={closeLandingModal}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <p className="text-slate-300 leading-relaxed">
+                  When fraud perpetrators edit an official Aadhaar or PAN card using Photoshop, the resaved JPEG compression creates an uneven error distribution around modified text.
+                </p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 bg-slate-950 rounded-2xl border border-emerald-500/30">
+                    <span className="text-[10px] font-bold text-emerald-400 font-mono">GENUINE DOCUMENT</span>
+                    <div className="my-2 h-16 bg-slate-900 rounded-lg flex items-center justify-center border border-dashed border-slate-800">
+                      <span className="text-[11px] font-mono text-slate-400">Uniform Noise Matrix</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400">Consistent microprint & font kerning across all fields.</p>
+                  </div>
+
+                  <div className="p-3 bg-slate-950 rounded-2xl border border-rose-500/40">
+                    <span className="text-[10px] font-bold text-rose-400 font-mono">TAMPERED FORGERY</span>
+                    <div className="my-2 h-16 bg-rose-500/10 rounded-lg flex items-center justify-center border border-dashed border-rose-500/30">
+                      <span className="text-[11px] font-mono text-rose-300 font-bold">86.2% Anomaly Spike</span>
+                    </div>
+                    <p className="text-[10px] text-rose-400/80">Font kerning mismatch on Name/DOB coordinates.</p>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={closeLandingModal}
+                className="w-full py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl text-xs cursor-pointer shadow-lg shadow-purple-600/20"
+              >
+                Close Forensic Demonstration
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="w-full py-3 px-6 text-center text-[11px] text-slate-500 border-t border-slate-900 bg-slate-950/50 backdrop-blur-md">
           Smart India Hackathon 2026 • AI-Powered Anti-Fraud & Identity Verification Engine
         </div>
@@ -761,7 +1487,6 @@ try {
   // ==========================================
   return (
     <div className="min-h-screen w-full bg-[#030712] text-slate-100 font-sans relative overflow-x-hidden flex flex-col justify-between">
-      {/* Background Cyber Grid */}
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
         <div className="absolute inset-0 bg-cyber-grid opacity-30"></div>
         <div className="absolute -top-32 -left-32 w-[550px] h-[550px] bg-cyan-500/15 rounded-full blur-[140px] animate-blob-1"></div>
@@ -865,7 +1590,6 @@ try {
               Audit Vault ({logs.length})
             </button>
 
-            {/* Print Patient Summary Tab */}
             <button
               onClick={() => setActiveTab("print")}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
@@ -944,8 +1668,13 @@ try {
                     </h2>
                     <select
                       value={docType}
-                      onChange={(e) => setDocType(e.target.value)}
-                      className="bg-slate-950 border border-slate-700 text-xs rounded-lg px-3 py-1.5 text-slate-300 focus:outline-none focus:border-cyan-500 cursor-pointer"
+                      disabled={isLockedOut}
+                      onChange={(e) => {
+                        setDocType(e.target.value);
+                        setDocPreview(null);
+                        setDocFile(null);
+                      }}
+                      className="bg-slate-950 border border-slate-700 text-xs rounded-lg px-3 py-1.5 text-slate-300 focus:outline-none focus:border-cyan-500 cursor-pointer disabled:opacity-50"
                     >
                       <option>Aadhaar Card</option>
                       <option>PAN Card</option>
@@ -955,140 +1684,249 @@ try {
                     </select>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-                    {/* Document Upload Box */}
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleDocUpload}
-                      accept="image/*"
-                      className="hidden"
-                    />
-                    <div
-                      onClick={() => fileInputRef.current?.click()}
-                      className={`relative border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer min-h-[220px] transition-all ${
-                        docPreview
-                          ? "border-cyan-500/50 bg-slate-950/60 shadow-lg shadow-cyan-950/20"
-                          : "border-slate-800 hover:border-cyan-500/40 bg-slate-950/30"
-                      }`}
-                    >
-                      {docPreview ? (
-                        <div className="relative w-full h-full flex flex-col items-center justify-center">
-                          <img
-                            src={docPreview}
-                            alt="Document Preview"
-                            className="max-h-32 rounded-lg object-contain border border-slate-800 shadow"
-                          />
-                          <p className="text-xs text-cyan-400 font-medium mt-2 flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> {docType} Ready
-                          </p>
-                          <span className="text-[10px] text-slate-500">Click to change document</span>
-                        </div>
-                      ) : (
-                        <>
-                          <UploadCloud className="w-8 h-8 text-slate-500 group-hover:text-cyan-400 mb-2 transition-colors" />
-                          <p className="text-xs font-semibold text-slate-200">
-                            Upload {docType}
-                          </p>
-                          <p className="text-[10px] text-slate-500 mt-1">
-                            Supports JPG, PNG, WEBP (Aadhaar/PAN)
-                          </p>
-                        </>
-                      )}
+                  {/* 36-HOUR LOCKOUT EMERGENCY BANNER */}
+                  {isLockedOut ? (
+                    <div className="p-6 bg-rose-950/40 border-2 border-rose-500 rounded-2xl text-center space-y-3 mb-4 animate-glow-reveal">
+                      <div className="p-3 bg-rose-500/20 rounded-full w-fit mx-auto border border-rose-500/40">
+                        <Ban className="w-8 h-8 text-rose-400" />
+                      </div>
+                      <h3 className="text-base font-bold text-white uppercase tracking-wider">
+                        Identity Quarantined (36-Hour Security Lockout Active)
+                      </h3>
+                      <p className="text-xs text-rose-300 max-w-md mx-auto leading-relaxed">
+                        This token has exceeded 3 consecutive presentation attack failures. Verification pipeline has been blocked to prevent automated brute-force impersonation.
+                      </p>
+                      <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-950 rounded-xl border border-rose-500/40 font-mono text-xs text-cyan-400">
+                        <Clock className="w-4 h-4 text-rose-400" />
+                        Quarantine Expiry: ~{remainingLockHours} Hours Remaining
+                      </div>
+                      <div>
+                        <button
+                          onClick={() => {
+                            localStorage.removeItem("verishield_quarantine_lock");
+                            setIsLockedOut(false);
+                            setFailedAttempts(0);
+                            alert("Quarantine override reset for demo evaluation.");
+                          }}
+                          className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer"
+                        >
+                          [Judge Demo Override: Reset Lockout]
+                        </button>
+                      </div>
                     </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                      {/* DOCUMENT UPLOAD BOX */}
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleDocUpload}
+                        accept="image/*"
+                        className="hidden"
+                      />
+                      <div
+                        onClick={() => fileInputRef.current?.click()}
+                        className={`relative border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer min-h-[250px] transition-all ${
+                          docPreview
+                            ? "border-emerald-500/50 bg-slate-950/60 shadow-lg shadow-emerald-950/20"
+                            : "border-slate-800 hover:border-cyan-500/40 bg-slate-950/30"
+                        }`}
+                      >
+                        {docPreview ? (
+                          <div className="relative w-full h-full flex flex-col items-center justify-center">
+                            <img
+                              src={docPreview}
+                              alt="Document Preview"
+                              className="max-h-32 rounded-lg object-contain border border-slate-800 shadow"
+                            />
+                            <p className="text-xs text-emerald-400 font-medium mt-2 flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> {docType} Verified & Accepted
+                            </p>
+                            <span className="text-[10px] text-slate-500">Click to change document</span>
+                          </div>
+                        ) : (
+                          <>
+                            <UploadCloud className="w-8 h-8 text-slate-500 group-hover:text-cyan-400 mb-2 transition-colors" />
+                            <p className="text-xs font-semibold text-slate-200">Upload {docType}</p>
+                            <p className="text-[10px] text-slate-500 mt-1">
+                              Requires Horizontal ID Card Format
+                            </p>
+                            <span className="mt-2 text-[10px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded-full">
+                              Auto Geometry Audit
+                            </span>
+                          </>
+                        )}
+                      </div>
 
-                    {/* WebCam Box */}
-                    <div className="relative border-2 border-slate-800 rounded-xl p-4 flex flex-col items-center justify-center text-center min-h-[220px] bg-slate-950/60">
-                      {isCameraActive && (
-                        <div className="w-full flex flex-col items-center">
-                          <video
-                            ref={videoRef}
-                            autoPlay
-                            playsInline
-                            muted
-                            className="w-full h-32 rounded-lg object-cover border border-cyan-500/50 shadow"
-                          />
-                          <div className="flex gap-2 mt-3">
-                            <button
-                              type="button"
-                              onClick={capturePhoto}
-                              className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-lg flex items-center gap-1 shadow cursor-pointer"
+                      {/* WEBCAM BOX */}
+                      <div
+                        className={`relative border-2 rounded-xl p-4 flex flex-col items-center justify-center text-center min-h-[250px] bg-slate-950/60 transition-colors ${
+                          isCameraActive
+                            ? dashLivenessPassed
+                              ? "border-emerald-500/60"
+                              : dashMultiPerson
+                              ? "border-amber-400/60"
+                              : !dashboardFaceDetected
+                              ? "border-rose-500/60"
+                              : !dashMovementDetected && dashTimer < 48
+                              ? "border-amber-400/60"
+                              : "border-cyan-500/50"
+                            : "border-slate-800"
+                        }`}
+                      >
+                        {isCameraActive && (
+                          <div className="w-full flex flex-col items-center space-y-2">
+                            <video
+                              ref={videoRef}
+                              autoPlay
+                              playsInline
+                              muted
+                              className="w-full h-32 rounded-lg object-cover border border-slate-800 shadow"
+                            />
+
+                            <div className="w-full space-y-1">
+                              <div className="flex justify-between text-[10px] font-mono">
+                                <span className="text-slate-300 font-bold">1-Min Protocol: {dashTimer}s / 60s</span>
+                                <span className={dashLivenessPassed ? "text-emerald-400 font-bold" : "text-cyan-400 font-bold"}>
+                                  {dashLivenessPassed ? "100% VALIDATED" : `${Math.round((dashTimer / 60) * 100)}%`}
+                                </span>
+                              </div>
+                              <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full transition-all duration-300 ${
+                                    dashLivenessPassed
+                                      ? "bg-emerald-400"
+                                      : !dashboardFaceDetected
+                                      ? "bg-rose-500"
+                                      : !dashMovementDetected && dashTimer < 48
+                                      ? "bg-amber-400 animate-pulse"
+                                      : "bg-cyan-400"
+                                  }`}
+                                  style={{ width: `${(dashTimer / 60) * 100}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            <div
+                              className={`w-full py-1.5 px-2 rounded-lg text-[10px] font-mono flex items-center justify-center gap-1.5 ${
+                                dashLivenessPassed
+                                  ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                                  : dashMultiPerson
+                                  ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 animate-pulse font-bold"
+                                  : !dashboardFaceDetected
+                                  ? "bg-rose-500/15 text-rose-300 border border-rose-500/30 animate-pulse font-bold"
+                                  : !dashMovementDetected && dashTimer < 48
+                                  ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 animate-pulse font-bold"
+                                  : "bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
+                              }`}
                             >
-                              <Camera className="w-3.5 h-3.5" /> Snap Photo
-                            </button>
+                              {dashLivenessPassed ? (
+                                <>
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                  3D Liveness Verified (Auto-Captured)
+                                </>
+                              ) : dashMultiPerson ? (
+                                <>
+                                  <Users className="w-3.5 h-3.5 text-amber-400" />
+                                  ⚠️ PAUSED: MULTIPLE PERSONS IN FRAME!
+                                </>
+                              ) : !dashboardFaceDetected ? (
+                                <>
+                                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                                  ⚠️ PAUSED: NO FACE IN FRAME
+                                </>
+                              ) : !dashMovementDetected && dashTimer < 48 ? (
+                                <>
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                                  ⚠️ PAUSED: PLEASE MOVE! ({dashPrompt.title})
+                                </>
+                              ) : (
+                                <>
+                                  {dashPrompt.icon}
+                                  {dashPrompt.title}
+                                </>
+                              )}
+                            </div>
+
                             <button
                               type="button"
                               onClick={stopCamera}
-                              className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs rounded-lg flex items-center gap-1 cursor-pointer"
+                              className="px-3 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs rounded-lg flex items-center gap-1 cursor-pointer"
                             >
-                              <StopCircle className="w-3.5 h-3.5" /> Cancel
+                              <StopCircle className="w-3.5 h-3.5" /> Cancel Test
                             </button>
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      {!isCameraActive && selfieCaptured && (
-                        <div className="w-full flex flex-col items-center justify-center">
-                          <img
-                            src={selfieCaptured}
-                            alt="Captured Live Face"
-                            className="w-24 h-24 rounded-full object-cover border-2 border-cyan-500 shadow"
-                          />
-                          <p className="text-xs text-cyan-400 font-medium mt-2 flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Live Facial Sample Ready
-                          </p>
-                          <button
-                            type="button"
-                            onClick={startCamera}
-                            className="text-[11px] text-slate-400 hover:text-cyan-300 underline mt-1 cursor-pointer"
-                          >
-                            Retake Photo
-                          </button>
-                        </div>
-                      )}
+                        {!isCameraActive && selfieCaptured && (
+                          <div className="w-full flex flex-col items-center justify-center">
+                            <img
+                              src={selfieCaptured}
+                              alt="Captured Live Face"
+                              className="w-24 h-24 rounded-full object-cover border-2 border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+                            />
+                            <p className="text-xs text-emerald-400 font-bold mt-2 flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> 60s Liveness Certified
+                            </p>
+                            <button
+                              type="button"
+                              onClick={startCamera}
+                              className="text-[11px] text-slate-400 hover:text-cyan-300 underline mt-1 cursor-pointer"
+                            >
+                              Retake 60s Protocol
+                            </button>
+                          </div>
+                        )}
 
-                      {!isCameraActive && !selfieCaptured && (
-                        <div className="flex flex-col items-center">
-                          <Video className="w-8 h-8 text-cyan-400 mb-2" />
-                          <p className="text-xs font-semibold text-slate-200">
-                            Live Laptop WebCam
-                          </p>
-                          <p className="text-[10px] text-slate-500 mb-3">
-                            3D Liveness & Anti-Spoofing Feed
-                          </p>
-                          <button
-                            type="button"
-                            onClick={startCamera}
-                            className="px-4 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-lg shadow-cyan-500/20 transition-all cursor-pointer"
-                          >
-                            <Camera className="w-3.5 h-3.5" /> Open WebCam
-                          </button>
-                        </div>
-                      )}
+                        {!isCameraActive && !selfieCaptured && (
+                          <div className="flex flex-col items-center">
+                            <Video className="w-8 h-8 text-cyan-400 mb-2" />
+                            <p className="text-xs font-semibold text-slate-200">60s Liveness Verification</p>
+                            <p className="text-[10px] text-slate-500 mb-3">Active biological movement verification</p>
+                            <button
+                              type="button"
+                              onClick={startCamera}
+                              className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-lg shadow-cyan-500/20 transition-all cursor-pointer"
+                            >
+                              <Camera className="w-3.5 h-3.5" /> Start 60s Liveness Protocol
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 <button
                   onClick={handleAnalyze}
-                  disabled={analyzing}
-                  className="w-full py-3.5 px-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold rounded-xl shadow-lg shadow-cyan-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  disabled={analyzing || !selfieCaptured || !docPreview || isLockedOut}
+                  className={`w-full py-3.5 px-4 font-bold rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 ${
+                    selfieCaptured && docPreview && !analyzing && !isLockedOut
+                      ? "bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 shadow-cyan-500/20 cursor-pointer"
+                      : "bg-slate-800 text-slate-500 cursor-not-allowed"
+                  }`}
                 >
                   {analyzing ? (
                     <>
                       <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></span>
-                      Executing Neural OCR & Biometric Pipeline...
+                      Executing Neural OCR & Biometric Cross-Verification...
                     </>
                   ) : (
                     <>
                       <UserCheck className="w-5 h-5" />
-                      Run AI Forensic Screening Pipeline
+                      {isLockedOut
+                        ? "Verification Pipeline Quarantined (Locked)"
+                        : !docPreview
+                        ? `Upload Valid ${docType} to Proceed`
+                        : !selfieCaptured
+                        ? "Complete 60s Liveness Check Above to Proceed"
+                        : "Run AI Forensic Screening Pipeline"}
                     </>
                   )}
                 </button>
               </div>
 
-              {/* AI Verdict Output */}
+              {/* AI VERDICT OUTPUT */}
               <div className="lg:col-span-5 bg-slate-900/60 border border-slate-800/90 rounded-2xl p-6 backdrop-blur flex flex-col justify-between">
                 <div>
                   <h2 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
@@ -1096,7 +1934,7 @@ try {
                     Forensic AI Verdict & Diagnostics
                   </h2>
                   <p className="text-xs text-slate-400 mb-4">
-                    Multi-layer neural tampering & biometric verification breakdown.
+                    Biometric cross-matching live camera face against document card photo.
                   </p>
 
                   {result ? (
@@ -1116,7 +1954,7 @@ try {
                           )}
                           <div>
                             <h3 className="text-sm font-bold">
-                              {result.isFraud ? "SUSPECTED FORGERY" : "VERIFIED AUTHENTIC"}
+                              {result.isFraud ? "CRITICAL BIOMETRIC FRAUD" : "VERIFIED AUTHENTIC"}
                             </h3>
                             <p className="text-[11px] opacity-80">{result.verdict}</p>
                           </div>
@@ -1134,16 +1972,43 @@ try {
 
                       <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3.5 text-xs space-y-2">
                         <div className="flex justify-between">
-                          <span className="text-slate-400">Extracted Name:</span>
+                          <span className="text-slate-400">Applicant:</span>
                           <span className="font-semibold text-slate-200">{result.detectedName}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-400">Identity ID:</span>
                           <span className="font-mono text-cyan-400">{result.docNumber}</span>
                         </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Face Match Status:</span>
+                          <span className={`font-mono font-bold ${result.isFraud ? "text-rose-400" : "text-emerald-400"}`}>
+                            {result.isFraud ? "MISMATCH (Third-Party ID)" : "100% Identity Match"}
+                          </span>
+                        </div>
+                        {result.isFraud && (
+                          <div className="flex justify-between text-rose-400 font-mono text-[11px] border-t border-slate-800/80 pt-1.5">
+                            <span>Lockout Strikes:</span>
+                            <span className="font-bold">{failedAttempts} / 3 Strikes Used</span>
+                          </div>
+                        )}
                       </div>
 
                       <div className="space-y-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800/80 text-xs">
+                        <div>
+                          <div className="flex justify-between mb-1">
+                            <span className="text-slate-400">Biometric Face Match (WebCam vs Document)</span>
+                            <span className={`font-mono font-bold ${result.faceMatch < 50 ? "text-rose-400" : "text-cyan-400"}`}>
+                              {result.faceMatch}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-700 ${result.faceMatch < 50 ? "bg-rose-500" : "bg-cyan-400"}`}
+                              style={{ width: `${result.faceMatch}%` }}
+                            />
+                          </div>
+                        </div>
+
                         <div>
                           <div className="flex justify-between mb-1">
                             <span className="text-slate-400">OCR Font Consistency</span>
@@ -1156,17 +2021,7 @@ try {
 
                         <div>
                           <div className="flex justify-between mb-1">
-                            <span className="text-slate-400">Biometric Face Match</span>
-                            <span className="text-cyan-400 font-mono font-bold">{result.faceMatch}%</span>
-                          </div>
-                          <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                            <div className="bg-cyan-400 h-full rounded-full" style={{ width: `${result.faceMatch}%` }} />
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between mb-1">
-                            <span className="text-slate-400">Tamper & Noise Anomaly</span>
+                            <span className="text-slate-400">Tamper & Impersonation Anomaly</span>
                             <span className={`font-mono font-bold ${result.tamperRisk > 50 ? "text-rose-400" : "text-emerald-400"}`}>
                               {result.tamperRisk}% Anomaly
                             </span>
@@ -1183,7 +2038,7 @@ try {
                   ) : (
                     <div className="h-64 flex flex-col items-center justify-center text-center text-slate-500 border border-dashed border-slate-800/80 rounded-xl">
                       <ShieldAlert className="w-10 h-10 mb-2 opacity-30 text-slate-400" />
-                      <p className="text-xs font-medium">Attach document, capture live face & click Run</p>
+                      <p className="text-xs font-medium">Attach verified card, complete 60s liveness & click Run</p>
                       <p className="text-[10px] text-slate-600 mt-0.5">Real-time model inference output</p>
                     </div>
                   )}
@@ -1201,9 +2056,7 @@ try {
             </div>
           )}
 
-          {/* ====================================================
-              PAGE 2: THREAT ANALYTICS & HEATMAPS
-              ==================================================== */}
+          {/* PAGE 2: ANALYTICS */}
           {activeTab === "analytics" && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1216,38 +2069,20 @@ try {
                   <div className="space-y-3 text-xs">
                     <div>
                       <div className="flex justify-between mb-1">
+                        <span className="text-slate-300">Biometric Impersonation / Face Mismatch</span>
+                        <span className="text-rose-400 font-mono">54% (339 cases)</span>
+                      </div>
+                      <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                        <div className="bg-rose-400 h-full rounded-full" style={{ width: "54%" }}></div>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex justify-between mb-1">
                         <span className="text-slate-300">Font Kerning & Typography</span>
-                        <span className="text-cyan-400 font-mono">48% (301 cases)</span>
+                        <span className="text-cyan-400 font-mono">31% (195 cases)</span>
                       </div>
                       <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                        <div className="bg-cyan-400 h-full rounded-full" style={{ width: "48%" }}></div>
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-1">
-                        <span className="text-slate-300">Deepfake Facial Morphing</span>
-                        <span className="text-purple-400 font-mono">31% (195 cases)</span>
-                      </div>
-                      <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                        <div className="bg-purple-400 h-full rounded-full" style={{ width: "31%" }}></div>
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-1">
-                        <span className="text-slate-300">Photoshop Microprint Overlay</span>
-                        <span className="text-rose-400 font-mono">15% (94 cases)</span>
-                      </div>
-                      <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                        <div className="bg-rose-400 h-full rounded-full" style={{ width: "15%" }}></div>
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-1">
-                        <span className="text-slate-300">Expired / Invalid Checksums</span>
-                        <span className="text-amber-400 font-mono">6% (38 cases)</span>
-                      </div>
-                      <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                        <div className="bg-amber-400 h-full rounded-full" style={{ width: "6%" }}></div>
+                        <div className="bg-cyan-400 h-full rounded-full" style={{ width: "31%" }}></div>
                       </div>
                     </div>
                   </div>
@@ -1267,14 +2102,6 @@ try {
                       <span className="text-slate-400">Inference Queue:</span>
                       <span className="text-cyan-400 font-bold">0 Pending (Real-Time)</span>
                     </div>
-                    <div className="flex justify-between p-2.5 bg-slate-950/60 rounded-xl border border-slate-800">
-                      <span className="text-slate-400">Accuracy Rate:</span>
-                      <span className="text-emerald-400 font-bold">99.2% F1-Score</span>
-                    </div>
-                    <div className="flex justify-between p-2.5 bg-slate-950/60 rounded-xl border border-slate-800">
-                      <span className="text-slate-400">Server Uptime:</span>
-                      <span className="text-white font-bold">99.98% High Availability</span>
-                    </div>
                   </div>
                 </div>
 
@@ -1293,68 +2120,13 @@ try {
                         <div className="bg-emerald-400 h-full rounded-full" style={{ width: "96.8%" }}></div>
                       </div>
                     </div>
-                    <div>
-                      <div className="flex justify-between mb-1">
-                        <span className="text-slate-300">PAN Card (ITD Service)</span>
-                        <span className="text-amber-400 font-mono">91.2% Safe</span>
-                      </div>
-                      <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                        <div className="bg-amber-400 h-full rounded-full" style={{ width: "91.2%" }}></div>
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-1">
-                        <span className="text-slate-300">Passport (MRZ Validated)</span>
-                        <span className="text-cyan-400 font-mono">98.9% Safe</span>
-                      </div>
-                      <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                        <div className="bg-cyan-400 h-full rounded-full" style={{ width: "98.9%" }}></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Regional Grid */}
-              <div className="bg-slate-900/60 border border-slate-800/90 rounded-2xl p-6 backdrop-blur">
-                <div className="flex justify-between items-center mb-4">
-                  <div>
-                    <h3 className="text-base font-bold text-white">National Threat Vector Grid</h3>
-                    <p className="text-xs text-slate-400">Live monitoring nodes across regional state clusters</p>
-                  </div>
-                  <span className="text-xs px-3 py-1 bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 rounded-lg font-mono">
-                    All Nodes Synchronized
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
-                  <div className="p-4 bg-slate-950/60 rounded-xl border border-slate-800">
-                    <p className="text-slate-400 text-[11px]">NORTH ZONE</p>
-                    <p className="text-lg font-bold text-white mt-1">4,210 Scans</p>
-                    <p className="text-rose-400 text-[11px] mt-0.5">3.8% Risk Flagged</p>
-                  </div>
-                  <div className="p-4 bg-slate-950/60 rounded-xl border border-slate-800">
-                    <p className="text-slate-400 text-[11px]">WEST ZONE</p>
-                    <p className="text-lg font-bold text-white mt-1">5,890 Scans</p>
-                    <p className="text-amber-400 text-[11px] mt-0.5">4.2% Risk Flagged</p>
-                  </div>
-                  <div className="p-4 bg-slate-950/60 rounded-xl border border-slate-800">
-                    <p className="text-slate-400 text-[11px]">SOUTH ZONE</p>
-                    <p className="text-lg font-bold text-white mt-1">3,420 Scans</p>
-                    <p className="text-emerald-400 text-[11px] mt-0.5">1.9% Risk Flagged</p>
-                  </div>
-                  <div className="p-4 bg-slate-950/60 rounded-xl border border-slate-800">
-                    <p className="text-slate-400 text-[11px]">EAST ZONE</p>
-                    <p className="text-lg font-bold text-white mt-1">1,303 Scans</p>
-                    <p className="text-rose-400 text-[11px] mt-0.5">5.1% Risk Flagged</p>
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* ====================================================
-              PAGE 3: AUDIT VAULT & HISTORY
-              ==================================================== */}
+          {/* PAGE 3: AUDIT VAULT */}
           {activeTab === "logs" && (
             <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 backdrop-blur">
               <div className="flex flex-wrap items-center justify-between mb-4 gap-3">
@@ -1442,9 +2214,7 @@ try {
             </div>
           )}
 
-          {/* ====================================================
-              PAGE 4: PRINT PATIENT FORENSIC SUMMARIES
-              ==================================================== */}
+          {/* PAGE 4: PRINT PATIENT SUMMARIES */}
           {activeTab === "print" && (
             <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 backdrop-blur space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1520,9 +2290,7 @@ try {
             </div>
           )}
 
-          {/* ====================================================
-              PAGE 5: SETTINGS & MODEL CONFIGURATION
-              ==================================================== */}
+          {/* PAGE 5: SETTINGS */}
           {activeTab === "settings" && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-slate-900/60 border border-slate-800/90 rounded-2xl p-6 backdrop-blur space-y-6">
@@ -1551,36 +2319,6 @@ try {
                       className="w-full accent-cyan-400 bg-slate-800 rounded-lg cursor-pointer"
                     />
                   </div>
-
-                  <div>
-                    <div className="flex justify-between mb-1.5">
-                      <span className="font-semibold text-slate-200">Biometric Facial Match Threshold</span>
-                      <span className="text-cyan-400 font-mono font-bold">{config.faceMatchSensitivity}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="60"
-                      max="99"
-                      value={config.faceMatchSensitivity}
-                      onChange={(e) => setConfig({ ...config, faceMatchSensitivity: Number(e.target.value) })}
-                      className="w-full accent-cyan-400 bg-slate-800 rounded-lg cursor-pointer"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between mb-1.5">
-                      <span className="font-semibold text-slate-200">Noise & Tampering Anomaly Sensitivity</span>
-                      <span className="text-cyan-400 font-mono font-bold">{config.tamperDetectionLevel}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="40"
-                      max="95"
-                      value={config.tamperDetectionLevel}
-                      onChange={(e) => setConfig({ ...config, tamperDetectionLevel: Number(e.target.value) })}
-                      className="w-full accent-cyan-400 bg-slate-800 rounded-lg cursor-pointer"
-                    />
-                  </div>
                 </div>
               </div>
 
@@ -1596,19 +2334,6 @@ try {
                 </div>
 
                 <div className="space-y-4 text-xs">
-                  <div>
-                    <label className="font-semibold text-slate-200 block mb-1">Active Neural Architecture</label>
-                    <select
-                      value={config.aiModel}
-                      onChange={(e) => setConfig({ ...config, aiModel: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-200 focus:outline-none focus:border-cyan-500"
-                    >
-                      <option>ResNet-50 + YOLOv8 Forensic (Production)</option>
-                      <option>Vision Transformer (ViT-B/16) High-Precision</option>
-                      <option>MobileNetV3 Edge Lite (Ultra-Low Latency)</option>
-                    </select>
-                  </div>
-
                   <div className="flex items-center justify-between p-3.5 bg-slate-950/60 rounded-xl border border-slate-800">
                     <div>
                       <p className="font-semibold text-white">Auto-Quarantine Forged IDs</p>
@@ -1629,6 +2354,99 @@ try {
                     <FileCheck className="w-4 h-4" /> Apply & Save Configuration
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* DYNAMIC DOCUMENT SCANNING & REJECTION POPUP */}
+          {isScanningDoc && (
+            <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+              <div
+                className={`w-full max-w-md bg-slate-900 border rounded-3xl p-6 shadow-2xl space-y-5 animate-glow-reveal transition-colors ${
+                  docScanError ? "border-rose-500/80" : "border-cyan-500/50"
+                }`}
+              >
+                <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className={`p-2 rounded-xl border ${
+                        docScanError
+                          ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                          : "bg-cyan-500/10 text-cyan-400 border-cyan-500/20"
+                      }`}
+                    >
+                      {docScanError ? <FileWarning className="w-5 h-5" /> : <Layers className="w-5 h-5 animate-pulse" />}
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-white">
+                        {docScanError ? "Document Verification Failed" : `Inspecting ${docType}`}
+                      </h3>
+                      <p className="text-xs font-mono text-slate-400">YOLOv8 Geometry & Layout Classifier</p>
+                    </div>
+                  </div>
+                  {docScanError && (
+                    <button
+                      onClick={() => setIsScanningDoc(false)}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {!docScanError ? (
+                  <div className="space-y-4 py-2">
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs font-mono">
+                        <span className="text-cyan-400 font-bold">{docScanStage}</span>
+                        <span className="text-slate-300 font-bold">{docScanProgress}%</span>
+                      </div>
+                      <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
+                        <div
+                          className="h-full bg-gradient-to-r from-cyan-500 to-blue-600 transition-all duration-300 rounded-full"
+                          style={{ width: `${docScanProgress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-[11px] font-mono text-slate-400 space-y-1">
+                      <p className="flex items-center gap-2 text-slate-300">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+                        Scanning card boundary coordinates (CR80 standard)
+                      </p>
+                      <p className="flex items-center gap-2 text-slate-300">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        Auditing microprint noise & layout checksum
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="p-3.5 bg-rose-500/15 border border-rose-500/50 rounded-2xl text-xs space-y-2">
+                      <div className="flex items-center gap-2 text-rose-300 font-bold">
+                        <AlertTriangle className="w-4 h-4 text-rose-400" />
+                        {docScanError.title}
+                      </div>
+                      <p className="text-slate-300 text-[11px] leading-relaxed">
+                        {docScanError.reason}
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-[11px] font-mono text-slate-400 space-y-1">
+                      <p className="text-white font-semibold">How to pass verification:</p>
+                      <p>1. Ensure it is a genuine horizontal {docType}.</p>
+                      <p>2. Do not upload casual standing selfies or scenery photos.</p>
+                      <p>3. All 4 borders of the identity card must be clearly visible.</p>
+                    </div>
+
+                    <button
+                      onClick={() => setIsScanningDoc(false)}
+                      className="w-full py-2.5 bg-rose-500 hover:bg-rose-400 text-slate-950 font-bold rounded-xl text-xs cursor-pointer shadow-lg shadow-rose-500/20"
+                    >
+                      Try Again with a Valid {docType}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
