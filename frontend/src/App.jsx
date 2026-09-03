@@ -54,6 +54,7 @@ export default function VeriShieldForensicApp() {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [selfieCaptured, setSelfieCaptured] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [latency, setLatency] = useState(380);
   const [result, setResult] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLogRow, setSelectedLogRow] = useState(null);
@@ -74,68 +75,8 @@ export default function VeriShieldForensicApp() {
   const [mediaStream, setMediaStream] = useState(null);
 
   // Initial Audit Logs
-  const [logs, setLogs] = useState([
-    {
-      id: "VERI-89211",
-      docType: "Aadhaar Card",
-      applicant: "Rajesh Kumar Verma",
-      timestamp: "2 mins ago",
-      ocrScore: "99.4%",
-      faceMatch: "98.1%",
-      riskScore: 0.03,
-      riskLevel: "Low",
-      status: "AUTHENTICATED",
-      details: "Microprint and security holographic layers intact. No font manipulation detected.",
-    },
-    {
-      id: "VERI-89210",
-      docType: "PAN Card",
-      applicant: "Vikram Malhotra",
-      timestamp: "14 mins ago",
-      ocrScore: "62.8%",
-      faceMatch: "41.5%",
-      riskScore: 0.91,
-      riskLevel: "High",
-      status: "FORGED FONT",
-      details: "Inconsistent font kerning on header. Face features show generative morph artifacts.",
-    },
-    {
-      id: "VERI-89209",
-      docType: "Passport",
-      applicant: "Ananya Sharma",
-      timestamp: "42 mins ago",
-      ocrScore: "98.7%",
-      faceMatch: "96.4%",
-      riskScore: 0.05,
-      riskLevel: "Low",
-      status: "AUTHENTICATED",
-      details: "Machine Readable Zone (MRZ) checksum verified with National Identity Gateway.",
-    },
-    {
-      id: "VERI-89208",
-      docType: "Voter ID",
-      applicant: "Mohd. Tariq",
-      timestamp: "1 hr ago",
-      ocrScore: "78.2%",
-      faceMatch: "64.0%",
-      riskScore: 0.52,
-      riskLevel: "Medium",
-      status: "SUSPICIOUS GLOW",
-      details: "Edge luminance analysis indicates possible photo layer replacement via digital overlay.",
-    },
-    {
-      id: "VERI-89207",
-      docType: "Driving License",
-      applicant: "Suresh Patil",
-      timestamp: "2 hrs ago",
-      ocrScore: "99.1%",
-      faceMatch: "97.8%",
-      riskScore: 0.02,
-      riskLevel: "Low",
-      status: "AUTHENTICATED",
-      details: "Sarathi Vahan digital signature cryptographic check passed successfully.",
-    },
-  ]);
+  const [logs, setLogs] = useState([]);
+   
 
   // Video attachment for live WebCam
   useEffect(() => {
@@ -166,14 +107,8 @@ export default function VeriShieldForensicApp() {
     try {
       const response = await fetch("http://localhost:8080/api/auth/register", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: formData.name,
-          email: formData.email,
-          password: formData.password,
-        }),
+       
+    
       });
 
       if (!response.ok) {
@@ -194,8 +129,11 @@ export default function VeriShieldForensicApp() {
   }
 
 try {
+  
   const response = await fetch("http://localhost:8080/api/auth/login", {
     method: "POST",
+    body: formData,
+
     headers: {
       "Content-Type": "application/json",
     },
@@ -216,8 +154,9 @@ try {
   triggerDashboardTransition("authenticated", user.name);
 } catch (error) {
   console.error(error);
-  alert("Invalid email or password.");
-}
+  alert("Invalid email or password.");}
+
+};
 
   const handleGuestEntry = () => {
     triggerDashboardTransition("guest", "Guest Forensic Officer");
@@ -302,53 +241,123 @@ try {
       setResult(null);
     }
   };
+  const loadScreenings = async () => {
+  try {
+    const response = await fetch("http://localhost:8080/api/screenings");
 
-  const handleAnalyze = () => {
-    if (!docPreview) {
-      alert("Please attach an identity document to begin the screening sequence.");
-      return;
-    }
-    if (!selfieCaptured) {
-      alert("Please capture a live facial biometric snapshot via WebCam.");
-      return;
+    if (!response.ok) {
+      throw new Error("Failed to load screenings");
     }
 
-    setAnalyzing(true);
-    setTimeout(() => {
-      setAnalyzing(false);
-      const isFraud = Math.random() < 0.35;
-      const newResult = {
-        isFraud,
-        ocrScore: isFraud ? 61.4 : 99.1,
-        faceMatch: isFraud ? 44.8 : 98.4,
-        tamperRisk: isFraud ? 86.2 : 1.5,
-        docNumber: isFraud ? "XXXX-XXXX-9821 (Manipulated)" : "6721 9081 2341",
-        detectedName: "ADARSH RAI",
-        verdict: isFraud
-          ? "CRITICAL ALERT: Digital Font Forgery & Facial Inconsistency Detected"
-          : "AUTHENTICATION PASSED: All Cryptographic & Forensic Markers Validated",
-      };
-      setResult(newResult);
+    const screenings = await response.json();
 
-      setLogs((prev) => [
-        {
-          id: `VERI-${Math.floor(10000 + Math.random() * 90000)}`,
-          docType: docType,
-          applicant: "Adarsh Rai",
-          timestamp: "Just now",
-          ocrScore: `${newResult.ocrScore}%`,
-          faceMatch: `${newResult.faceMatch}%`,
-          riskScore: isFraud ? 0.88 : 0.02,
-          riskLevel: isFraud ? "High" : "Low",
-          status: isFraud ? "TAMPERED" : "AUTHENTICATED",
-          details: isFraud
-            ? "High forensic anomaly detected in font typography and face alignment matrix."
-            : "All neural heuristic and biometric checks successfully validated.",
-        },
-        ...prev,
-      ]);
-    }, 2200);
-  };
+    const formattedLogs = screenings.map((screening) => ({
+      id: `VERI-${screening.id}`,
+      docType: screening.documentType,
+      applicant: screening.applicantName,
+      timestamp: new Date(screening.createdAt).toLocaleString(),
+      ocrScore: `${screening.ocrScore}%`,
+      faceMatch: `${screening.faceMatch}%`,
+      riskScore: screening.tamperRisk / 100,
+      riskLevel:
+        screening.tamperRisk >= 70
+          ? "High"
+          : screening.tamperRisk >= 30
+          ? "Medium"
+          : "Low",
+      status: screening.fraud ? "TAMPERED" : "AUTHENTICATED",
+      details: screening.fraud
+        ? "High forensic anomaly detected."
+        : "All identity verification checks successfully validated.",
+    }));
+
+    setLogs(formattedLogs);
+  } catch (error) {
+    console.error("Failed to load screenings:", error);
+  }
+};
+useEffect(() => {
+  loadScreenings();
+}, []);
+const handleAnalyze = async () => {
+  if (!docPreview) {
+    alert("Please attach an identity document to begin the screening sequence.");
+    return;
+  }
+
+  if (!selfieCaptured) {
+    alert("Please capture a live facial biometric snapshot via WebCam.");
+    return;
+  }
+
+  setAnalyzing(true);
+  const startTime = performance.now();
+
+  try {
+    const response = await fetch("http://localhost:8080/api/screenings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        applicantName: "Adarsh Rai",
+        documentType: docType,
+        ocrScore: 99.1,
+        faceMatch: 98.4,
+        tamperRisk: 1.5,
+        fraud: false,
+        verdict:
+          "AUTHENTICATION PASSED: All Cryptographic & Forensic Markers Validated",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Screening request failed");
+    }
+
+    const savedScreening = await response.json();
+
+    const newResult = {
+      isFraud: savedScreening.fraud,
+      ocrScore: savedScreening.ocrScore,
+      faceMatch: savedScreening.faceMatch,
+      tamperRisk: savedScreening.tamperRisk,
+      docNumber: "6721 9081 2341",
+      detectedName: savedScreening.applicantName,
+      verdict: savedScreening.verdict,
+    };
+
+    setResult(newResult);
+
+    setLogs((prev) => [
+      {
+        id: `VERI-${savedScreening.id}`,
+        docType: savedScreening.documentType,
+        applicant: savedScreening.applicantName,
+        timestamp: "Just now",
+        ocrScore: `${savedScreening.ocrScore}%`,
+        faceMatch: `${savedScreening.faceMatch}%`,
+        riskScore: savedScreening.tamperRisk / 100,
+        riskLevel: savedScreening.fraud ? "High" : "Low",
+        status: savedScreening.fraud
+          ? "TAMPERED"
+          : "AUTHENTICATED",
+        details: savedScreening.fraud
+          ? "High forensic anomaly detected."
+          : "All identity verification checks successfully validated.",
+      },
+      ...prev,
+    ]);
+  } catch (error) {
+    console.error(error);
+    alert("Unable to connect to the screening backend. Please make sure the backend is running.");
+  } finally {
+    const endTime = performance.now();
+const latency = Math.round(endTime - startTime);
+setLatency(latency);
+    setAnalyzing(false);
+  }
+};
 
   // Printable Summary Report Generator Function
   const generatePrintableSummary = (logData) => {
@@ -898,7 +907,7 @@ try {
                 <span className="text-[11px] font-semibold tracking-wider text-slate-400">TOTAL SCANNED</span>
                 <Activity className="w-4 h-4 text-cyan-400" />
               </div>
-              <p className="text-2xl font-bold text-white font-mono">{logs.length + 14820}</p>
+              <p className="text-2xl font-bold text-white font-mono">{logs.length}</p>
               <span className="text-[11px] text-cyan-400">+14% vs national average</span>
             </div>
 
@@ -907,7 +916,7 @@ try {
                 <span className="text-[11px] font-semibold tracking-wider text-slate-400">FORGERIES BLOCKED</span>
                 <ShieldAlert className="w-4 h-4 text-rose-400" />
               </div>
-              <p className="text-2xl font-bold text-rose-400 font-mono">628</p>
+              <p className="text-2xl font-bold text-rose-400 font-mono">{logs.filter((log) => log.status === "TAMPERED").length}</p>
               <span className="text-[11px] text-rose-400/80">Tampered Fonts & Morphs</span>
             </div>
 
@@ -916,7 +925,7 @@ try {
                 <span className="text-[11px] font-semibold tracking-wider text-slate-400">AUTHENTICATED</span>
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
               </div>
-              <p className="text-2xl font-bold text-emerald-400 font-mono">14,192</p>
+              <p className="text-2xl font-bold text-emerald-400 font-mono">{logs.filter((log) => log.status === "AUTHENTICATED").length}</p>
               <span className="text-[11px] text-emerald-400/80">95.7% Genuine Pass</span>
             </div>
 
@@ -925,7 +934,7 @@ try {
                 <span className="text-[11px] font-semibold tracking-wider text-slate-400">LATENCY TIME</span>
                 <RefreshCw className="w-4 h-4 text-amber-400" />
               </div>
-              <p className="text-2xl font-bold text-white font-mono">380 ms</p>
+              <p className="text-2xl font-bold text-white font-mono">{latency} ms</p>
               <span className="text-[11px] text-amber-400">Edge Acceleration Online</span>
             </div>
           </div>
@@ -1688,4 +1697,4 @@ try {
       </div>
     </div>
   );
-} }
+} 
