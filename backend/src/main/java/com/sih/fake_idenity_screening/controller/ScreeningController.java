@@ -1,5 +1,5 @@
-package com.sih.fake_idenity_screening.controller;
 
+package com.sih.fake_idenity_screening.controller;
 import java.util.List;
 
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.sih.fake_idenity_screening.entity.Screening;
+import com.sih.fake_idenity_screening.service.OcrService;
 import com.sih.fake_idenity_screening.service.ScreeningService;
 
 @RestController
@@ -18,11 +19,16 @@ import com.sih.fake_idenity_screening.service.ScreeningService;
 @CrossOrigin(origins = "http://localhost:5173")
 public class ScreeningController {
 
-    private final ScreeningService screeningService;
+   private final ScreeningService screeningService;
+private final OcrService ocrService;
 
-    public ScreeningController(ScreeningService screeningService) {
-        this.screeningService = screeningService;
-    }
+public ScreeningController(
+        ScreeningService screeningService,
+        OcrService ocrService) {
+
+    this.screeningService = screeningService;
+    this.ocrService = ocrService;
+}
 
     @PostMapping
     public Screening createScreening(
@@ -36,16 +42,11 @@ public class ScreeningController {
         screening.setApplicantName(applicantName);
         screening.setDocumentType(documentType);
 
-        // Temporary demo scores
-        screening.setOcrScore(99.1);
-        screening.setFaceMatch(98.4);
-        screening.setTamperRisk(1.5);
-        screening.setFraud(false);
-        screening.setVerdict(
-                "AUTHENTICATION PASSED: All Cryptographic & Forensic Markers Validated"
+        return screeningService.analyzeAndSave(
+                screening,
+                document,
+                selfie
         );
-
-        return screeningService.saveScreening(screening);
     }
 
     @GetMapping
