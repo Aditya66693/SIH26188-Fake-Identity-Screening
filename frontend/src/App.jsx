@@ -97,6 +97,7 @@ export default function VeriShieldForensicApp() {
   const [docPreview, setDocPreview] = useState(null);
   const [docType, setDocType] = useState("Aadhaar Card");
   const [analyzing, setAnalyzing] = useState(false);
+  const [latency, setLatency] = useState(380);
   const [result, setResult] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLogRow, setSelectedLogRow] = useState(null);
@@ -1622,7 +1623,7 @@ export default function VeriShieldForensicApp() {
                 <span className="text-[11px] font-semibold tracking-wider text-slate-400">TOTAL SCANNED</span>
                 <Activity className="w-4 h-4 text-cyan-400" />
               </div>
-              <p className="text-2xl font-bold text-white font-mono">{logs.length + 14820}</p>
+              <p className="text-2xl font-bold text-white font-mono">{logs.length}</p>
               <span className="text-[11px] text-cyan-400">+14% vs national average</span>
             </div>
 
@@ -1631,7 +1632,7 @@ export default function VeriShieldForensicApp() {
                 <span className="text-[11px] font-semibold tracking-wider text-slate-400">FORGERIES BLOCKED</span>
                 <ShieldAlert className="w-4 h-4 text-rose-400" />
               </div>
-              <p className="text-2xl font-bold text-rose-400 font-mono">628</p>
+              <p className="text-2xl font-bold text-rose-400 font-mono">{logs.filter((log) => log.status === "TAMPERED").length}</p>
               <span className="text-[11px] text-rose-400/80">Tampered Fonts & Morphs</span>
             </div>
 
@@ -1640,7 +1641,7 @@ export default function VeriShieldForensicApp() {
                 <span className="text-[11px] font-semibold tracking-wider text-slate-400">AUTHENTICATED</span>
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
               </div>
-              <p className="text-2xl font-bold text-emerald-400 font-mono">14,192</p>
+              <p className="text-2xl font-bold text-emerald-400 font-mono">{logs.filter((log) => log.status === "AUTHENTICATED").length}</p>
               <span className="text-[11px] text-emerald-400/80">95.7% Genuine Pass</span>
             </div>
 
@@ -1649,7 +1650,7 @@ export default function VeriShieldForensicApp() {
                 <span className="text-[11px] font-semibold tracking-wider text-slate-400">LATENCY TIME</span>
                 <RefreshCw className="w-4 h-4 text-amber-400" />
               </div>
-              <p className="text-2xl font-bold text-white font-mono">380 ms</p>
+              <p className="text-2xl font-bold text-white font-mono">{latency} ms</p>
               <span className="text-[11px] text-amber-400">Edge Acceleration Online</span>
             </div>
           </div>
@@ -2506,4 +2507,4 @@ export default function VeriShieldForensicApp() {
       </div>
     </div>
   );
-} }
+} 
